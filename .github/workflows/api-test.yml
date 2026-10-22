@@ -1,41 +1,94 @@
+```yaml
 name: API Tests
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   api-test:
+    name: Run ReqRes API Tests
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install Newman and HTML reporter
+      - name: Install Newman and HTML Reporter
         run: npm install -g newman newman-reporter-htmlextra
 
-      - name: Run data-driven API tests
+      - name: Validate required files
+        run: |
+          test -f ReqRes_Collection.json || {
+            echo "ERROR: ReqRes_Collection.json not found"
+            exit 1
+          }
+
+          test -f ReqRes_Environment.json || {
+            echo "ERROR: ReqRes_Environment.json not found"
+            exit 1
+          }
+
+          test -f users.csv || {
+            echo "ERROR: users.csv not found"
+            exit 1
+          }
+
+      - name: Configure API key
         env:
           REQRES_API_KEY: ${{ secrets.REQRES_API_KEY }}
         run: |
-          # Replace the placeholder with the GitHub Secret at runtime.
-          node -e "const fs=require('fs'); const p='ReqRes_Environment.json'; let e=JSON.parse(fs.readFileSync(p,'utf8')); e.values=e.values.map(v=>v.key==='api-key'?{...v,value:process.env.REQRES_API_KEY||''}:v); fs.writeFileSync(p,JSON.stringify(e,null,2));"
+          node <<'NODE'
+          const fs = require('fs');
+
+          const apiKey = (process.env.REQRES_API_KEY || '').trim();
+
+          if (!apiKey || /[\r\n]/.test(apiKey)) {
+            console.error('ERROR: REQRES_API_KEY is missing or invalid.');
+            process.exit(1);
+          }
+
+          const file = 'ReqRes_Environment.json';
+          const env = JSON.parse(fs.readFileSync(file, 'utf8'));
+
+          if (!Array.isArray(env.values)) {
+            throw new Error('Environment JSON does not contain a values array.');
+          }
+
+          const variable = env.values.find(v => v.key === 'api-key');
+
+          if (!variable) {
+            throw new Error('Environment variable "api-key" was not found.');
+          }
+
+          variable.value = apiKey;
+          variable.enabled = true;
+
+          fs.writeFileSync(file, JSON.stringify(env, null, 2));
+          console.log('API key configured successfully.');
+          NODE
+
+      - name: Run data-driven API tests
+        run: |
           newman run ReqRes_Collection.json \
             -e ReqRes_Environment.json \
             -d users.csv \
             --reporters cli,htmlextra \
             --reporter-htmlextra-export report.html
 
-      - name: Upload HTML report
+      - name: Upload API test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: api-test-report
           path: report.html
           if-no-files-found: warn
+          retention-days: 7
+```
