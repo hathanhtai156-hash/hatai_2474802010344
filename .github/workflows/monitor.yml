@@ -8,92 +8,94 @@ on:
 
 jobs:
   monitor:
-    name: Monitor API Availability and Performance
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check API and generate summary
-        shell: bash
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Newman and HTML Extra Reporter
+        run: npm install -g newman newman-reporter-htmlextra
+
+      - name: Create Monitor Collection
         env:
-          REQRES_API_KEY: ${{ secrets.REQRES_API_KEY }}
+          API_KEY: ${{ secrets.REQRES_API_KEY }}
         run: |
-          set -uo pipefail
-
-          ENDPOINT="https://reqres.in/api/users?page=1"
-          STATUS="N/A"
-          RESPONSE_TIME="N/A"
-          AVAILABILITY="FAIL"
-          PERFORMANCE="FAIL"
-          OVERALL="FAIL"
-          ERROR_MESSAGE=""
-
-          if [[ -z "${REQRES_API_KEY:-}" ]]; then
-            ERROR_MESSAGE="Missing GitHub Secret REQRES_API_KEY"
-          else
-            RESULT=$(curl --silent --show-error \
-              --output response.json \
-              --write-out '%{http_code} %{time_total}' \
-              --max-time 15 \
-              --header "x-api-key: ${REQRES_API_KEY}" \
-              "$ENDPOINT") || ERROR_MESSAGE="Request failed"
-
-            if [[ -n "${RESULT:-}" ]]; then
-              STATUS="${RESULT%% *}"
-              RESPONSE_TIME="${RESULT#* }"
-            fi
-
-            if [[ "$STATUS" == "200" ]]; then
-              AVAILABILITY="PASS"
-            else
-              ERROR_MESSAGE="${ERROR_MESSAGE:-Expected HTTP 200, got $STATUS}"
-            fi
-
-            if [[ "$RESPONSE_TIME" != "N/A" ]]; then
-              if awk -v t="$RESPONSE_TIME" \
-                'BEGIN { exit !(t < 0.8) }'; then
-                PERFORMANCE="PASS"
-              else
-                ERROR_MESSAGE="${ERROR_MESSAGE:-Response time was 800ms or more}"
-              fi
-            fi
-
-            if [[ "$AVAILABILITY" == "PASS" && "$PERFORMANCE" == "PASS" ]]; then
-              OVERALL="PASS"
-            fi
-          fi
-
-          echo "## ReqRes API Monitor"
-          echo ""
-          echo "| Metric | Result |"
-          echo "|---|---|"
-          echo "| Endpoint | GET /api/users?page=1 |"
-          echo "| HTTP Status | $STATUS |"
-          echo "| Response Time | ${RESPONSE_TIME}s |"
-          echo "| Availability (HTTP 200) | $AVAILABILITY |"
-          echo "| Performance (<800ms) | $PERFORMANCE |"
-          echo "| Overall Result | **$OVERALL** |"
-          echo ""
-
-          {
-            echo "## ReqRes API Monitor"
-            echo ""
-            echo "| Metric | Result |"
-            echo "|---|---|"
-            echo "| Endpoint | GET /api/users?page=1 |"
-            echo "| HTTP Status | $STATUS |"
-            echo "| Response Time | ${RESPONSE_TIME}s |"
-            echo "| Availability (HTTP 200) | $AVAILABILITY |"
-            echo "| Performance (<800ms) | $PERFORMANCE |"
-            echo "| Overall Result | **$OVERALL** |"
-            if [[ -n "$ERROR_MESSAGE" ]]; then
-              echo ""
-              echo "> **Error:** $ERROR_MESSAGE"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [[ "$OVERALL" != "PASS" ]]; then
-            echo "Monitoring failed: ${ERROR_MESSAGE:-API checks did not pass}"
+          if [ -z "$API_KEY" ]; then
+            echo "Missing REQRES_API_KEY secret"
             exit 1
           fi
 
-          echo "Monitoring passed successfully."
+          cat > monitor-collection.json <<'JSON'
+          {
+            "info": {
+              "name": "ReqRes API Monitor",
+              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            },
+            "item": [
+              {
+                "name": "Monitor API Availability and Performance",
+                "event": [
+                  {
+                    "listen": "test",
+                    "script": {
+                      "type": "text/javascript",
+                      "exec": [
+                        "pm.test('Status code is 200', function () {",
+                        "    pm.response.to.have.status(200);",
+                        "});",
+                        "pm.test('Response time is below 800ms', function () {",
+                        "    pm.expect(pm.response.responseTime).to.be.below(800);",
+                        "});"
+                      ]
+                    }
+                  }
+                ],
+                "request": {
+                  "method": "GET",
+                  "header": [
+                    {
+                      "key": "x-api-key",
+                      "value": "{{api-key}}"
+                    }
+                  ],
+                  "url": {
+                    "raw": "{{baseUrl}}/api/users?page=1",
+                    "host": ["{{baseUrl}}"],
+                    "path": ["api", "users"],
+                    "query": [
+                      {
+                        "key": "page",
+                        "value": "1"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+          JSON
+
+      - name: Run API Monitor Tests
+        env:
+          API_KEY: ${{ secrets.REQRES_API_KEY }}
+        run: |
+          newman run monitor-collection.json \
+            --env-var "baseUrl=https://reqres.in" \
+            --env-var "api-key=$API_KEY" \
+            --reporters cli,htmlextra \
+            --reporter-htmlextra-export monitor-report.html
+
+      - name: Upload HTML Monitor Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReqRes-Monitor-Report
+          path: monitor-report.html
+          if-no-files-found: warn
+          retention-days: 7
