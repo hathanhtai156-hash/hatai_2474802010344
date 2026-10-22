@@ -50,8 +50,13 @@ jobs:
 
           const apiKey = (process.env.REQRES_API_KEY || '').trim();
 
-          if (!apiKey || /[\r\n]/.test(apiKey)) {
-            console.error('ERROR: REQRES_API_KEY is missing or invalid.');
+          if (!apiKey) {
+            console.error('ERROR: GitHub Secret REQRES_API_KEY is missing.');
+            process.exit(1);
+          }
+
+          if (/[\r\n]/.test(apiKey)) {
+            console.error('ERROR: API key contains line breaks.');
             process.exit(1);
           }
 
@@ -59,36 +64,4 @@ jobs:
           const env = JSON.parse(fs.readFileSync(file, 'utf8'));
 
           if (!Array.isArray(env.values)) {
-            throw new Error('Environment JSON does not contain a values array.');
-          }
-
-          const variable = env.values.find(v => v.key === 'api-key');
-
-          if (!variable) {
-            throw new Error('Environment variable "api-key" was not found.');
-          }
-
-          variable.value = apiKey;
-          variable.enabled = true;
-
-          fs.writeFileSync(file, JSON.stringify(env, null, 2));
-          console.log('API key configured successfully.');
-          NODE
-
-      - name: Run data-driven API tests
-        run: |
-          newman run ReqRes_Collection.json \
-            -e ReqRes_Environment.json \
-            -d users.csv \
-            --reporters cli,htmlextra \
-            --reporter-htmlextra-export report.html
-
-      - name: Upload API test report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: api-test-report
-          path: report.html
-          if-no-files-found: warn
-          retention-days: 7
-```
+            throw new Error('Invalid
