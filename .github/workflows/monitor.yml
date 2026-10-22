@@ -23,14 +23,7 @@ jobs:
         run: npm install -g newman newman-reporter-htmlextra
 
       - name: Create Monitor Collection
-        env:
-          API_KEY: ${{ secrets.REQRES_API_KEY }}
         run: |
-          if [ -z "$API_KEY" ]; then
-            echo "Missing REQRES_API_KEY secret"
-            exit 1
-          fi
-
           cat > monitor-collection.json <<'JSON'
           {
             "info": {
@@ -39,7 +32,7 @@ jobs:
             },
             "item": [
               {
-                "name": "Monitor API Availability and Performance",
+                "name": "GET Users - API Availability",
                 "event": [
                   {
                     "listen": "test",
@@ -47,10 +40,10 @@ jobs:
                       "type": "text/javascript",
                       "exec": [
                         "pm.test('Status code is 200', function () {",
-                        "    pm.response.to.have.status(200);",
+                        "  pm.response.to.have.status(200);",
                         "});",
                         "pm.test('Response time is below 800ms', function () {",
-                        "    pm.expect(pm.response.responseTime).to.be.below(800);",
+                        "  pm.expect(pm.response.responseTime).to.be.below(800);",
                         "});"
                       ]
                     }
@@ -81,15 +74,21 @@ jobs:
           }
           JSON
 
-      - name: Run API Monitor Tests
+      - name: Run Monitor and Generate HTML Report
         env:
           API_KEY: ${{ secrets.REQRES_API_KEY }}
         run: |
+          if [ -z "$API_KEY" ]; then
+            echo "REQRES_API_KEY secret is missing"
+            exit 1
+          fi
+
           newman run monitor-collection.json \
             --env-var "baseUrl=https://reqres.in" \
             --env-var "api-key=$API_KEY" \
             --reporters cli,htmlextra \
-            --reporter-htmlextra-export monitor-report.html
+            --reporter-htmlextra-export monitor-report.html \
+            --reporter-htmlextra-title "ReqRes API Monitor"
 
       - name: Upload HTML Monitor Report
         if: always()
