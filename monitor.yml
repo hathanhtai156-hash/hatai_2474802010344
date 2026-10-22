@@ -1,0 +1,31 @@
+name: API Availability and Performance Monitor
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Newman
+        run: npm install -g newman
+
+      - name: Run availability and SLA checks
+        env:
+          REQRES_API_KEY: ${{ secrets.REQRES_API_KEY }}
+        run: |
+          node -e "const fs=require('fs'); const p='ReqRes_Environment.json'; let e=JSON.parse(fs.readFileSync(p,'utf8')); e.values=e.values.map(v=>v.key==='api-key'?{...v,value:process.env.REQRES_API_KEY||''}:v); fs.writeFileSync(p,JSON.stringify(e,null,2));"
+          newman run ReqRes_Collection.json \
+            --folder "Monitor API" \
+            -e ReqRes_Environment.json \
+            --reporters cli
