@@ -1,79 +1,50 @@
-```yaml
+
 name: ReqRes API Monitor
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 jobs:
   monitor:
-    name: Monitor API Availability and Performance
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Newman
-        run: npm install -g newman
-
-      - name: Create monitoring collection
+      - name: Check API availability and performance
+        shell: bash
         env:
           REQRES_API_KEY: ${{ secrets.REQRES_API_KEY }}
         run: |
-          node -e '
-          const fs = require("fs");
-          const key = (process.env.REQRES_API_KEY || "").trim();
+          set -euo pipefail
 
-          if (!key) {
-            console.error("Missing REQRES_API_KEY secret");
-            process.exit(1);
-          }
+          if [[ -z "${REQRES_API_KEY:-}" ]]; then
+            echo "ERROR: Missing REQRES_API_KEY secret"
+            exit 1
+          fi
 
-          const collection = {
-            info: {
-              name: "ReqRes API Monitor",
-              schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-            },
-            item: [{
-              name: "Monitor API Availability and Performance",
-              request: {
-                method: "GET",
-                header: [{
-                  key: "x-api-key",
-                  value: key
-                }],
-                url: "https://reqres.in/api/users?page=1"
-              },
-              event: [{
-                listen: "test",
-                script: {
-                  type: "text/javascript",
-                  exec: [
-                    "pm.test(\\"Availability: status code is 200\\", function () {",
-                    "  pm.response.to.have.status(200);",
-                    "});",
-                    "pm.test(\\"Performance: response time is below 800ms\\", function () {",
-                    "  pm.expect(pm.response.responseTime).to.be.below(800);",
-                    "});"
-                  ]
-                }
-              }]
-            }]
-          };
+          result=$(curl --silent --show-error \
+            --output response.json \
+            --write-out '%{http_code} %{time_total}' \
+            --header "x-api-key: ${REQRES_API_KEY}" \
+            "https://reqres.in/api/users?page=1")
 
-          fs.writeFileSync(
-            "monitor-collection.json",
-            JSON.stringify(collection, null, 2)
-          );
-          '
+          status="${result%% *}"
+          response_time="${result#* }"
 
-      - name: Run API monitoring
-        run: newman run monitor-collection.json --reporters cli
-```
+          echo "HTTP status: $status"
+          echo "Response time: ${response_time}s"
+
+          if [[ "$status" != "200" ]]; then
+            echo "FAIL: Expected HTTP 200"
+            cat response.json
+            exit 1
+          fi
+
+          awk -v t="$response_time" \
+            'BEGIN { exit !(t < 0.8) }' || {
+              echo "FAIL: Response time must be below 800ms"
+              exit 1
+            }
+
+          echo "PASS: API returned HTTP 200 in under 800ms"
