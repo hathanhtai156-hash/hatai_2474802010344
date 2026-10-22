@@ -8,43 +8,92 @@ on:
 
 jobs:
   monitor:
+    name: Monitor API Availability and Performance
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check API availability and performance
+      - name: Check API and generate summary
         shell: bash
         env:
           REQRES_API_KEY: ${{ secrets.REQRES_API_KEY }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
+
+          ENDPOINT="https://reqres.in/api/users?page=1"
+          STATUS="N/A"
+          RESPONSE_TIME="N/A"
+          AVAILABILITY="FAIL"
+          PERFORMANCE="FAIL"
+          OVERALL="FAIL"
+          ERROR_MESSAGE=""
 
           if [[ -z "${REQRES_API_KEY:-}" ]]; then
-            echo "ERROR: Missing REQRES_API_KEY secret"
+            ERROR_MESSAGE="Missing GitHub Secret REQRES_API_KEY"
+          else
+            RESULT=$(curl --silent --show-error \
+              --output response.json \
+              --write-out '%{http_code} %{time_total}' \
+              --max-time 15 \
+              --header "x-api-key: ${REQRES_API_KEY}" \
+              "$ENDPOINT") || ERROR_MESSAGE="Request failed"
+
+            if [[ -n "${RESULT:-}" ]]; then
+              STATUS="${RESULT%% *}"
+              RESPONSE_TIME="${RESULT#* }"
+            fi
+
+            if [[ "$STATUS" == "200" ]]; then
+              AVAILABILITY="PASS"
+            else
+              ERROR_MESSAGE="${ERROR_MESSAGE:-Expected HTTP 200, got $STATUS}"
+            fi
+
+            if [[ "$RESPONSE_TIME" != "N/A" ]]; then
+              if awk -v t="$RESPONSE_TIME" \
+                'BEGIN { exit !(t < 0.8) }'; then
+                PERFORMANCE="PASS"
+              else
+                ERROR_MESSAGE="${ERROR_MESSAGE:-Response time was 800ms or more}"
+              fi
+            fi
+
+            if [[ "$AVAILABILITY" == "PASS" && "$PERFORMANCE" == "PASS" ]]; then
+              OVERALL="PASS"
+            fi
+          fi
+
+          echo "## ReqRes API Monitor"
+          echo ""
+          echo "| Metric | Result |"
+          echo "|---|---|"
+          echo "| Endpoint | GET /api/users?page=1 |"
+          echo "| HTTP Status | $STATUS |"
+          echo "| Response Time | ${RESPONSE_TIME}s |"
+          echo "| Availability (HTTP 200) | $AVAILABILITY |"
+          echo "| Performance (<800ms) | $PERFORMANCE |"
+          echo "| Overall Result | **$OVERALL** |"
+          echo ""
+
+          {
+            echo "## ReqRes API Monitor"
+            echo ""
+            echo "| Metric | Result |"
+            echo "|---|---|"
+            echo "| Endpoint | GET /api/users?page=1 |"
+            echo "| HTTP Status | $STATUS |"
+            echo "| Response Time | ${RESPONSE_TIME}s |"
+            echo "| Availability (HTTP 200) | $AVAILABILITY |"
+            echo "| Performance (<800ms) | $PERFORMANCE |"
+            echo "| Overall Result | **$OVERALL** |"
+            if [[ -n "$ERROR_MESSAGE" ]]; then
+              echo ""
+              echo "> **Error:** $ERROR_MESSAGE"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$OVERALL" != "PASS" ]]; then
+            echo "Monitoring failed: ${ERROR_MESSAGE:-API checks did not pass}"
             exit 1
           fi
 
-          result=$(curl --silent --show-error \
-            --output response.json \
-            --write-out '%{http_code} %{time_total}' \
-            --header "x-api-key: ${REQRES_API_KEY}" \
-            "https://reqres.in/api/users?page=1")
-
-          status="${result%% *}"
-          response_time="${result#* }"
-
-          echo "HTTP status: $status"
-          echo "Response time: ${response_time}s"
-
-          if [[ "$status" != "200" ]]; then
-            echo "FAIL: Expected HTTP 200"
-            cat response.json
-            exit 1
-          fi
-
-          awk -v t="$response_time" \
-            'BEGIN { exit !(t < 0.8) }' || {
-              echo "FAIL: Response time must be below 800ms"
-              exit 1
-            }
-
-          echo "PASS: API returned HTTP 200 in under 800ms"
+          echo "Monitoring passed successfully."
