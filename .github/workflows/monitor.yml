@@ -8,6 +8,7 @@ on:
 
 jobs:
   monitor:
+    name: Monitor API Availability and Performance
     runs-on: ubuntu-latest
 
     steps:
@@ -23,11 +24,13 @@ jobs:
         run: npm install -g newman newman-reporter-htmlextra
 
       - name: Create Monitor Collection
+        shell: bash
         run: |
           cat > monitor-collection.json <<'JSON'
           {
             "info": {
               "name": "ReqRes API Monitor",
+              "description": "Monitor API availability and response time",
               "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
             },
             "item": [
@@ -40,10 +43,10 @@ jobs:
                       "type": "text/javascript",
                       "exec": [
                         "pm.test('Status code is 200', function () {",
-                        "  pm.response.to.have.status(200);",
+                        "    pm.response.to.have.status(200);",
                         "});",
                         "pm.test('Response time is below 800ms', function () {",
-                        "  pm.expect(pm.response.responseTime).to.be.below(800);",
+                        "    pm.expect(pm.response.responseTime).to.be.below(800);",
                         "});"
                       ]
                     }
@@ -77,18 +80,34 @@ jobs:
       - name: Run Monitor and Generate HTML Report
         env:
           API_KEY: ${{ secrets.REQRES_API_KEY }}
+        shell: bash
         run: |
+          set -uo pipefail
+
+          API_KEY="$(printf '%s' "${API_KEY:-}" | tr -d '\r\n')"
+
           if [ -z "$API_KEY" ]; then
-            echo "REQRES_API_KEY secret is missing"
+            echo "ERROR: GitHub Secret REQRES_API_KEY is missing."
             exit 1
           fi
 
+          set +e
           newman run monitor-collection.json \
             --env-var "baseUrl=https://reqres.in" \
             --env-var "api-key=$API_KEY" \
             --reporters cli,htmlextra \
             --reporter-htmlextra-export monitor-report.html \
             --reporter-htmlextra-title "ReqRes API Monitor"
+
+          TEST_EXIT_CODE=$?
+          set -e
+
+          if [ ! -s monitor-report.html ]; then
+            echo "ERROR: HTML report was not generated."
+            exit 1
+          fi
+
+          exit "$TEST_EXIT_CODE"
 
       - name: Upload HTML Monitor Report
         if: always()
