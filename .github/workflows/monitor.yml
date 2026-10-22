@@ -27,74 +27,53 @@ jobs:
         env:
           REQRES_API_KEY: ${{ secrets.REQRES_API_KEY }}
         run: |
-          node <<'NODE'
-          const fs = require('fs');
+          node -e '
+          const fs = require("fs");
+          const key = (process.env.REQRES_API_KEY || "").trim();
 
-          const apiKey = process.env.REQRES_API_KEY;
-
-          if (!apiKey) {
-            console.error('Missing GitHub Secret: REQRES_API_KEY');
+          if (!key) {
+            console.error("Missing REQRES_API_KEY secret");
             process.exit(1);
           }
 
           const collection = {
             info: {
-              name: 'ReqRes API Monitor',
-              schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
+              name: "ReqRes API Monitor",
+              schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
             },
-            item: [
-              {
-                name: 'Monitor API Availability and Performance',
-                request: {
-                  method: 'GET',
-                  header: [
-                    {
-                      key: 'x-api-key',
-                      value: apiKey
-                    }
-                  ],
-                  url: {
-                    raw: 'https://reqres.in/api/users?page=1',
-                    protocol: 'https',
-                    host: ['reqres', 'in'],
-                    path: ['api', 'users'],
-                    query: [
-                      {
-                        key: 'page',
-                        value: '1'
-                      }
-                    ]
-                  }
-                },
-                event: [
-                  {
-                    listen: 'test',
-                    script: {
-                      type: 'text/javascript',
-                      exec: [
-                        "console.log('HTTP status:', pm.response.code);",
-                        "console.log('Response time:', pm.response.responseTime, 'ms');",
-                        "pm.test('API availability: status is 200', function () {",
-                        "  pm.response.to.have.status(200);",
-                        "});",
-                        "pm.test('Performance: response time is below 800ms', function () {",
-                        "  pm.expect(pm.response.responseTime).to.be.below(800);",
-                        "});"
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
+            item: [{
+              name: "Monitor API Availability and Performance",
+              request: {
+                method: "GET",
+                header: [{
+                  key: "x-api-key",
+                  value: key
+                }],
+                url: "https://reqres.in/api/users?page=1"
+              },
+              event: [{
+                listen: "test",
+                script: {
+                  type: "text/javascript",
+                  exec: [
+                    "pm.test(\\"Availability: status code is 200\\", function () {",
+                    "  pm.response.to.have.status(200);",
+                    "});",
+                    "pm.test(\\"Performance: response time is below 800ms\\", function () {",
+                    "  pm.expect(pm.response.responseTime).to.be.below(800);",
+                    "});"
+                  ]
+                }
+              }]
+            }]
           };
 
           fs.writeFileSync(
-            'monitor-collection.json',
+            "monitor-collection.json",
             JSON.stringify(collection, null, 2)
           );
-
-          console.log('Monitoring collection created successfully.');
-          NODE
+          '
 
       - name: Run API monitoring
         run: newman run monitor-collection.json --reporters cli
+```
